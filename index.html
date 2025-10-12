@@ -39,13 +39,16 @@ let lastSpokenAt = 0;
 const COOLDOWN = 1400; 
 
 const MAP = {
-  'ok': 'saya',
-  'ily': 'jovanka',
-  'pointup': 'salam kenal',
-  'palm': 'hallo'
+  'ok': 'saya', //👌//
+  'ily': 'jovanka', //🤟//
+  'pointup': 'salam kenal', //☝️//
+  'palm': 'hallo', //🖐️//
+  'callme': 'hai', //🤙//
+  'middlefinger': 'monyet', //🖕//
 };
 
 function chooseIdVoicePreferMale(){
+  console.log(window.speechSynthesis.getVoices());
   return new Promise((resolve)=>{
     let tries=0;
     function pick(){
@@ -75,7 +78,7 @@ async function speakIfAvailable(text){
   if(now - lastSpokenAt < COOLDOWN) return;
   lastSpokenAt = now;
   const u=new SpeechSynthesisUtterance(text);
-  u.voice = voiceToUse;
+  u.voice = window.speechSynthesis.getVoices().find(v => v.name === "Microsoft Zira");
   u.lang='id-ID';
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(u);
@@ -111,6 +114,10 @@ function detectSpecific(lm){
   if(Math.hypot(t.x-i.x,t.y-i.y)<0.045) return 'ok';
   // POINTUP = telunjuk + jempol up, others down
   if(thumb && idxUp && !midUp && !ringUp && !pinkyUp) return 'pointup';
+  // CALLME = pinky + jempol up, others down
+  if(thumb && !idxUp && !midUp && !ringUp && pinkyUp) return 'callme';
+  // MIDDLEFINGER = only middle up
+  if(!thumb && !idxUp && midUp && !ringUp && !pinkyUp) return 'middlefinger';
   return null;
 }
 
