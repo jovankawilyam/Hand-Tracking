@@ -1,0 +1,145 @@
+// ...existing code...
+const videoEl = document.getElementById('video');
+const canvas = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+
+let camera = null;
+let voiceToUse = null;
+let lastSpokenAt = 0;
+const COOLDOWN = 1400; 
+
+const MAP = {
+  'ok': 'saya', //👌//
+  'ily': 'jovanka', //🤟//
+  'pointup': 'salam kenal', //☝️//
+  'palm': 'hallo', //🖐️//
+  'callme': 'hai', //🤙//
+  'middlefinger': 'monyet', //🖕//
+  'thumbsup': 'mantap', //👍//
+  'thumbsdown': 'yah', //👎//
+};
+
+function chooseIdVoicePreferMale(){
+  console.log(window.speechSynthesis.getVoices());
+  return new Promise((resolve)=>{
+    let tries=0;
+    function pick(){
+      const voices=window.speechSynthesis.getVoices();
+      if(voices.length===0 && tries<12){tries++;setTimeout(pick,150);return;}
+      const idVoices=voices.filter(v=>v.lang&&v.lang.toLowerCase().startsWith('id'));
+      if(idVoices.length>0){
+        const maleHints=['Male','Pria','Laki','Bpk','Pak','Google'];
+        for(const hint of maleHints){
+          const f=idVoices.find(v=>v.name&&v.name.includes(hint));
+          if(f){resolve(f);return;}
+        }
+        resolve(idVoices[0]);
+        return;
+      }
+      resolve(null);
+    }
+    pick();
+  });
+}
+
+async function speakIfAvailable(text){
+  if(!('speechSynthesis' in window)) return;
+  if(!voiceToUse) voiceToUse = await chooseIdVoicePreferMale();
+  if(!voiceToUse) return;
+  const now=Date.now();
+  if(now - lastSpokenAt < COOLDOWN) return;
+  lastSpokenAt = now;
+  const u=new SpeechSynthesisUtterance(text);
+  u.voice = window.speechSynthesis.getVoices().find(v => v.name === "Microsoft Zira");
+  u.lang='id-ID';
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+
+function countExtendedFingers(lm){
+  let cnt=0;
+  if(lm[8].y<lm[6].y-0.01) cnt++; // index
+  if(lm[12].y<lm[10].y-0.01) cnt++; // middle
+  if(lm[16].y<lm[14].y-0.01) cnt++; // ring
+  if(lm[20].y<lm[18].y-0.01) cnt++; // pinky
+  const wrist=lm[0], tip=lm[4], ip=lm[3];
+  const dx=tip.x-wrist.x, dy=tip.y-wrist.y;
+  const dist=Math.hypot(dx,dy);
+  const horiz=Math.abs(tip.x-ip.x)>0.03;
+  if(dist>0.12&&horiz) cnt++;
+  return cnt;
+}
+
+function detectSpecific(lm){
+  if(!lm) return null;
+  const thumb = (()=>{const wrist=lm[0],tip=lm[4],ip=lm[3];const dx=tip.x-wrist.x,dy=tip.y-wrist.y;const dist=Math.hypot(dx,dy);const horiz=Math.abs(tip.x-ip.x)>0.03;return dist>0.12&&horiz;})();
+  const idxUp = (lm[8].y<lm[6].y-0.01);
+  const midUp = (lm[12].y<lm[10].y-0.01);
+  const ringUp = (lm[16].y<lm[14].y-0.01);
+  const pinkyUp = (lm[20].y<lm[18].y-0.01);
+
+  // ILY
+  if(thumb && idxUp && !midUp && !ringUp && pinkyUp) return 'ily';
+  // OK
+  const t=lm[4], i=lm[8];
+  if(Math.hypot(t.x-i.x,t.y-i.y)<0.045) return 'ok';
+  // POINTUP = telunjuk + jempol up, others down
+  if(thumb && idxUp && !midUp && !ringUp && !pinkyUp) return 'pointup';
+  // CALLME = pinky + jempol up, others down
+  if(thumb && !idxUp && !midUp && !ringUp && pinkyUp) return 'callme';
+  // MIDDLEFINGER = only middle up
+  if(!thumb && !idxUp && midUp && !ringUp && !pinkyUp) return 'middlefinger';
+  // THUMBSUP = only thumb up
+  if(thumb && !idxUp && !midUp && !ringUp && !pinkyUp) return 'thumbsup';
+  // THUMBSDOWN = only thumb down
+  if(!thumb && !idxUp && !midUp && !ringUp && !pinkyUp) return 'thumbsdown';
+  return null;
+}
+
+function onResults(results){
+  if(videoEl.videoWidth && videoEl.videoHeight){
+    if(canvas.width!==videoEl.videoWidth||canvas.height!==videoEl.videoHeight){
+      canvas.width=videoEl.videoWidth;
+      canvas.height=videoEl.videoHeight;
+      canvas.style.width='100%';
+      canvas.style.height='auto';
+    }
+  }
+
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  try{ctx.drawImage(results.image,0,0,canvas.width,canvas.height);}catch(e){}
+
+  let detected=null;
+  if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
+    const lm=results.multiHandLandmarks[0];
+    drawConnectors(ctx,lm,HAND_CONNECTIONS,{color:'#00FFAA',lineWidth:2});
+    drawLandmarks(ctx,lm,{color:'#FF0066',lineWidth:1});
+    const ext = countExtendedFingers(lm);
+    if(ext>=4) detected='palm';
+    else detected = detectSpecific(lm);
+  }
+
+  if(detected && MAP[detected]) speakIfAvailable(MAP[detected]);
+}
+
+const hands = new Hands({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+hands.setOptions({maxNumHands:1,modelComplexity:1,minDetectionConfidence:0.65,minTrackingConfidence:0.5});
+hands.onResults(onResults);
+
+startBtn.addEventListener('click',async()=>{
+  if(camera) return;
+  camera=new Camera(videoEl,{onFrame:async()=>{await hands.send({image:videoEl});},width:1280,height:720});
+  await camera.start();
+  window.speechSynthesis.getVoices();
+  voiceToUse=await chooseIdVoicePreferMale();
+});
+
+stopBtn.addEventListener('click',()=>{
+  if(camera){camera.stop();camera=null;}
+  window.speechSynthesis.cancel();
+});
+
+window.speechSynthesis.onvoiceschanged=async()=>{if(!voiceToUse) voiceToUse=await chooseIdVoicePreferMale();};
+window.addEventListener('resize',()=>{if(videoEl.videoWidth){canvas.style.width='100%';canvas.style.height='auto';}});
